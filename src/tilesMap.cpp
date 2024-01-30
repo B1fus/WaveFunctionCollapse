@@ -61,6 +61,7 @@ void Tile::createCopy(Tile& dst){
         return;
     
     dst.m_sides = m_sides;
+    dst.m_chanse = m_chanse;
 
     const cv::Mat& thisImg = m_img.getImage();
     cv::Mat& dstImg = dst.getImage();
@@ -167,7 +168,7 @@ bool TileSides::operator!=(const TileSides& right) const noexcept{
     return !(*this == right);
 }
 
-Tile::Tile(TileImage img, TileSides sides):m_img(img), m_sides(sides){}
+Tile::Tile(TileImage img, TileSides sides, uint32_t chanse):m_img(img), m_sides(sides), m_chanse(chanse){}
 
 void Tile::rotate90Deg(uint32_t n){
     m_img.rotate90Deg(n);
@@ -176,6 +177,10 @@ void Tile::rotate90Deg(uint32_t n){
 
 uint32_t Tile::getCountFeatures() const noexcept{
     return m_sides.getCountFeatures();
+}
+
+uint32_t Tile::getChanse() const noexcept{
+    return m_chanse;
 }
 
 decltype(std::declval<TileImage>().getImage()) Tile::getImage(){
@@ -418,12 +423,55 @@ void TileMapGenerator::_generateImage(TileSet& tileSet){
                 );
         }
     }
- }
+}
 
-void TileMapGenerator::generateMap(TileSet& tileSet, cv::Size sizeMap){
-    m_mapSize = sizeMap;
-    m_tileSize = tileSet.getTileSize();
+uint32_t TileMapGenerator::_doGenerateStep(TileSet& tileSet){
+    //take random tile from vector
+    size_t tileIndx = rand()%m_insertTilePlaces.size();
+    auto tilePlace = m_insertTilePlaces[tileIndx];
+    m_insertTilePlaces[tileIndx] = std::move(m_insertTilePlaces.back());
+    m_insertTilePlaces.pop_back();
 
+    //check if tile was visited, then skip it
+    //if(m_tileMap[tilePlace.second][tilePlace.first] != 0) return !m_insertTilePlaces.empty();
+    if(m_visitedMap[tilePlace.second][tilePlace.first] > 0) return (!m_insertTilePlaces.empty() ? 2 : false );
+    m_visitedMap[tilePlace.second][tilePlace.first]++;
+    
+    auto needSides = _getNeighbourSides(tileSet, tilePlace);
+    auto candidateTiles = tileSet.getTilesIdBySides(needSides.data());
+
+    //choosing tile with chanse biases 
+    if(candidateTiles.size()!=0){
+        uint32_t maxRand = 0;
+        size_t chooseId;
+        for(auto& i: candidateTiles){
+            maxRand += tileSet.getTileById(i).getChanse();
+        }
+        if(maxRand == 0) chooseId = rand()%candidateTiles.size();
+        else{
+            uint32_t randNum = rand()%maxRand;
+            chooseId = 0;
+            while(chooseId<candidateTiles.size()){
+                uint32_t chanse = tileSet.getTileById(candidateTiles[chooseId]).getChanse();
+                if(chanse <= randNum) randNum -= chanse;
+                else break;
+                chooseId++;
+            }
+        }
+        m_tileMap[tilePlace.second][tilePlace.first] = candidateTiles[chooseId] + 1;
+        //m_tileMap[tilePlace.second][tilePlace.first] = candidateTiles[rand()%candidateTiles.size()] + 1;
+    }
+
+    //adding tiles in the queue
+    if(tilePlace.second > 0) m_insertTilePlaces.push_back({tilePlace.first, tilePlace.second - 1});
+    if(tilePlace.first+1 < m_mapSize.width) m_insertTilePlaces.push_back({tilePlace.first + 1, tilePlace.second});
+    if(tilePlace.second+1 < m_mapSize.height) m_insertTilePlaces.push_back({tilePlace.first, tilePlace.second + 1});
+    if(tilePlace.first > 0) m_insertTilePlaces.push_back({tilePlace.first - 1, tilePlace.second});
+    
+    return !m_insertTilePlaces.empty();
+}
+
+void TileMapGenerator::_initMaps(){
     m_mapImage = cv::Mat(m_mapSize.height * m_tileSize.height, 
                         m_mapSize.width * m_tileSize.width,
                         CV_8UC4,
@@ -436,37 +484,43 @@ void TileMapGenerator::generateMap(TileSet& tileSet, cv::Size sizeMap){
     m_visitedMap = std::vector<std::vector<int>>(
                    m_mapSize.height, std::vector<int>(m_mapSize.width, 0)
                    );
+}
+
+void TileMapGenerator::generateMap(TileSet& tileSet, cv::Size sizeMap){
+    m_mapSize = sizeMap;
+    m_tileSize = tileSet.getTileSize();
+
+    _initMaps();
+
+    m_insertTilePlaces.clear();
+    m_insertTilePlaces.reserve(m_mapSize.area());
+    m_insertTilePlaces.push_back({rand()%m_mapSize.width, rand()%m_mapSize.height});
     
-    std::vector<std::pair<uint32_t, uint32_t>> insertTilePlaces;
-    insertTilePlaces.reserve(m_mapSize.area());
-    insertTilePlaces.push_back({rand()%m_mapSize.width, rand()%m_mapSize.height});
-    
-    while(!insertTilePlaces.empty()){
-        //take random tile from vector
-        size_t tileIndx = rand()%insertTilePlaces.size();
-        auto tilePlace = insertTilePlaces[tileIndx];
-        insertTilePlaces[tileIndx] = std::move(insertTilePlaces.back());
-        insertTilePlaces.pop_back();
-
-        //check if tile was visited, then skip it
-        //if(m_tileMap[tilePlace.second][tilePlace.first] != 0) continue;
-        if(m_visitedMap[tilePlace.second][tilePlace.first] > 0) continue;
-        m_visitedMap[tilePlace.second][tilePlace.first]++;
-        
-        auto needSides = _getNeighbourSides(tileSet, tilePlace);
-        auto candidateTiles = tileSet.getTilesIdBySides(needSides.data());
-
-        if(candidateTiles.size()!=0)
-        m_tileMap[tilePlace.second][tilePlace.first] = candidateTiles[rand()%candidateTiles.size()] + 1;
-        //m_tileMap[tilePlace.second][tilePlace.first] = candidateTiles[(rand()%candidateTiles.size()+1)%candidateTiles.size()] + 1;
-
-        if(tilePlace.second > 0) insertTilePlaces.push_back({tilePlace.first, tilePlace.second - 1});
-        if(tilePlace.first+1 < m_mapSize.width) insertTilePlaces.push_back({tilePlace.first + 1, tilePlace.second});
-        if(tilePlace.second+1 < m_mapSize.height) insertTilePlaces.push_back({tilePlace.first, tilePlace.second + 1});
-        if(tilePlace.first > 0) insertTilePlaces.push_back({tilePlace.first - 1, tilePlace.second});
-    }
+    while(_doGenerateStep(tileSet));
 
     _generateImage(tileSet);
+}
+
+void TileMapGenerator::generateMap_saveSteps(TileSet& tileSet, cv::Size sizeMap, const std::string& saveDirectory){
+    m_mapSize = sizeMap;
+    m_tileSize = tileSet.getTileSize();
+
+    _initMaps();
+    m_insertTilePlaces.clear();
+    m_insertTilePlaces.reserve(m_mapSize.area());
+    m_insertTilePlaces.push_back({rand()%m_mapSize.width, rand()%m_mapSize.height});
+    
+    std::filesystem::create_directories(saveDirectory);
+
+    size_t imgCount = 0;
+    while(uint32_t ret = _doGenerateStep(tileSet)){
+        if(ret != 2){
+            _generateImage(tileSet);
+            cv::imwrite(saveDirectory + "/" + std::to_string(imgCount) + ".png", getMap());
+            imgCount++;
+        }
+    }
+
 }
 
 cv::Mat TileMapGenerator::getMap(){

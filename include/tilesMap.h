@@ -55,15 +55,17 @@ class Tile{
 private:
     TileImage m_img;
     TileSides m_sides;
+    uint32_t m_chanse; //chanse for choose this tile
 public:
     Tile() = default;
-    Tile(TileImage img, TileSides sides);
+    Tile(TileImage img, TileSides sides, uint32_t chanse = 1);
 
     void rotate90Deg(uint32_t n);
-    //dst - where copy will be move
+    //dst - where the copy will be moved
     void createCopy(Tile& dst);
 
     uint32_t getCountFeatures() const noexcept;
+    uint32_t getChanse() const noexcept;
 
     decltype(std::declval<TileImage>().getImage()) getImage();
     decltype(std::declval<TileSides>().getSides()) getSides() const;
@@ -111,17 +113,25 @@ private:
     cv::Size m_mapSize;
     cv::Size m_tileSize;
 
+    std::vector<std::pair<uint32_t, uint32_t>> m_insertTilePlaces; //queue for inserting tile on the map
+
 private:
     bool _isValidMapCoords(const std::pair<uint32_t, uint32_t>& coord) const;
     std::array<std::string, 4> _getNeighbourSides(const TileSet& tileSet, std::pair<uint32_t, uint32_t> tileCoords) const;
     void _generateImage(TileSet& tileSet);
+    //return true if can do next step or false if can't do next step
+    uint32_t _doGenerateStep(TileSet& tileSet);
+    //rewrite or create new maps
+    void _initMaps();
 
 public:
     TileMapGenerator()=default;
 
     //sizeMap - map's size where width and height means count tiles by x and y coords
     void generateMap(TileSet& tileSet, cv::Size sizeMap);
-    
+    //generate map and save every generated tile on map to saveDirectory as separated image
+    void generateMap_saveSteps(TileSet& tileSet, cv::Size sizeMap, const std::string& saveDirectory);
+
     //get last generated map
     cv::Mat getMap();
 };
